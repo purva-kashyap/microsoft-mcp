@@ -1,4 +1,5 @@
 import os
+import sys
 import msal
 import pathlib as pl
 from typing import NamedTuple
@@ -7,6 +8,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CACHE_FILE = pl.Path.home() / ".microsoft_mcp_token_cache.json"
+
+# Use .default scope which includes all permissions granted to the app in Azure AD
+# This works better with token caching across different API calls
 SCOPES = ["https://graph.microsoft.com/.default"]
 
 
@@ -32,6 +36,10 @@ def get_app() -> msal.PublicClientApplication:
     if not client_id:
         raise ValueError("MICROSOFT_MCP_CLIENT_ID environment variable is required")
 
+    # Use 'common' for multi-tenant (personal, work, school accounts)
+    # Use 'organizations' for work/school accounts only
+    # Use 'consumers' for personal Microsoft accounts only
+    # Or use a specific tenant ID
     tenant_id = os.getenv("MICROSOFT_MCP_TENANT_ID", "common")
     authority = f"https://login.microsoftonline.com/{tenant_id}"
 
@@ -57,25 +65,29 @@ def get_token(account_id: str | None = None) -> str:
         account = next(
             (a for a in accounts if a["home_account_id"] == account_id), None
         )
+        if not account:
+            raise Exception(
+                f"Account with ID {account_id} not found. Please authenticate first using the authenticate_account tool."
+            )
     elif accounts:
         account = accounts[0]
+    else:
+        raise Exception(
+            "No authenticated accounts found. Please authenticate first using the authenticate_account tool."
+        )
 
+    print(f"[DEBUG] Requesting token with scopes: {SCOPES}", file=sys.stderr)
+    print(f"[DEBUG] Account details: {account}", file=sys.stderr)
     result = app.acquire_token_silent(SCOPES, account=account)
+    print(f"[DEBUG] Token result: {result is not None}, has error: {'error' in result if result else 'N/A'}", file=sys.stderr)
 
     if not result:
-        flow = app.initiate_device_flow(scopes=SCOPES)
-        if "user_code" not in flow:
-            raise Exception(
-                f"Failed to get device code: {flow.get('error_description', 'Unknown error')}"
-            )
-        verification_uri = flow.get(
-            "verification_uri",
-            flow.get("verification_url", "https://microsoft.com/devicelogin"),
+        # Token acquisition failed - need to re-authenticate
+        # Don't start an interactive flow here - raise an error instead
+        raise Exception(
+            f"Failed to acquire token for account {account.get('username', 'unknown')}. "
+            "The token may have expired. Please re-authenticate using the authenticate_account tool."
         )
-        print(
-            f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}"
-        )
-        result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:
         raise Exception(

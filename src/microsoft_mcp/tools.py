@@ -1,6 +1,8 @@
 import base64
 import datetime as dt
 import pathlib as pl
+import sys
+import os
 from typing import Any
 from fastmcp import FastMCP
 from . import graph, auth
@@ -94,8 +96,15 @@ def complete_authentication(flow_cache: str) -> dict[str, str]:
 
     # Save the token cache
     cache = app.token_cache
-    if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
+    if isinstance(cache, auth.msal.SerializableTokenCache):
+        # Force save the cache even if has_state_changed is False
         auth._write_cache(cache.serialize())
+        # Also verify the cache was written
+        import os
+        if os.path.exists(auth.CACHE_FILE):
+            print(f"✅ Token cache saved to {auth.CACHE_FILE}", file=sys.stderr)
+        else:
+            print(f"⚠️  Warning: Token cache file not found at {auth.CACHE_FILE}", file=sys.stderr)
 
     # Get the newly added account
     accounts = app.get_accounts()
